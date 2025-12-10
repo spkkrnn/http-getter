@@ -1,0 +1,69 @@
+#include "ReqHandling.h"
+
+inline int WebResource::append(char *newBytes, size_t numberOfBytes) {
+    char *tmpData = (char *)realloc(this->m_data, this->m_size + numberOfBytes + 1);
+    if (!tmpData) {
+        std::cout << "alloc error" << std::endl;
+        return -1;
+    }
+    this->m_data = tmpData;
+    memcpy(&(this->m_data[this->m_size]), newBytes, numberOfBytes);
+    this->m_size += numberOfBytes;
+    this->m_data[this->m_size] = 0; // null terminator
+    return 0;
+}
+
+void WebResource::print() {
+    printf("%.*s\n", (int) this->m_size, this->m_data);
+}
+
+static size_t receiveData(char *buffer, size_t itemsize, size_t nmemb, void *dest) {
+    size_t chunkSize = itemsize * nmemb;
+    WebResource *tmpResource = (WebResource *)dest;
+    if (tmpResource->append(buffer, chunkSize) < 0) {
+        std::cout << "realloc failed" << std::endl;
+        return 0;
+    }
+    return chunkSize;
+}
+
+CURLcode httpGet(CURL *curl, std::string &url) {
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    CURLcode perfResult = curl_easy_perform(curl);
+    if (perfResult != CURLE_OK) {
+        std::cerr << "problem loading page:" << curl_easy_strerror(perfResult) << std::endl; 
+    }
+    return perfResult;
+}
+
+CURLcode getPage(CURL *curl, std::string &url, bool print, bool redirect) {
+    CURLcode getResult = CURLE_OK;
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+    if (redirect) {
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L); // 1L = CURLFOLLOW_ALL
+    }
+    if (print) {
+        getResult = httpGet(curl, url);
+        return getResult;
+    }
+    WebResource page(HTML);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveData);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&page);
+    getResult = httpGet(curl, url);
+    page.print();
+    return getResult;
+}
+
+int printHeaders(CURL *curl) {
+    struct curl_header *prev = NULL;
+    struct curl_header *h;
+    do {
+        h = curl_easy_nextheader(curl, CURLH_HEADER, -1, prev);
+        if(h) {
+            //printf(" %s: %s (%u)\n", h->name, h->value, (unsigned int) h->amount);
+            std::cout << h->name << ": " << h->value << " (" << h->amount << ")" << std::endl;
+        }
+        prev = h;
+    } while(h);
+    return 0;
+}
