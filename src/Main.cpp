@@ -18,7 +18,7 @@ int main(int argc, char* argv[]) {
     //curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_3);
     getPage(curl, target_url, print, redirect);
 
-    //printHeaders(curl);
+    printHeaders(curl);
     curl_easy_cleanup(curl);
     curl_global_cleanup();
     return EXIT_SUCCESS;

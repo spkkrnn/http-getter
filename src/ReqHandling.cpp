@@ -13,6 +13,15 @@ inline int WebResource::append(char *newBytes, size_t numberOfBytes) {
     return 0;
 }
 
+void WebResource::addInfo(std::string name, curl_off_t value) {
+    try {
+        this->m_info->insert({name, value});
+    }
+    catch (std::bad_alloc& e) {
+        std::cerr << "Allocation failed for " << name << ": " << e.what() << std::endl;
+    }
+}
+
 void WebResource::print() {
     printf("%.*s\n", (int) this->m_size, this->m_data);
 }
@@ -27,6 +36,19 @@ static size_t receiveData(char *buffer, size_t itemsize, size_t nmemb, void *des
     return chunkSize;
 }
 
+int saveTransferInfo(CURL *curl, WebResource &resource) {
+    //const std::unordered_map<std::string, CURLINFO> *vars = &(InfoVars::transferDetails);
+    CURLcode result;
+    curl_off_t tmp;
+    for (const auto &infoPair : InfoVars::transferDetails) {
+        result = curl_easy_getinfo(curl, infoPair.second, &tmp);
+        if ((result == CURLE_OK) && tmp) {
+            resource.addInfo(infoPair.first, tmp);
+        }
+    }
+    return 0;
+}
+
 CURLcode httpGet(CURL *curl, std::string &url) {
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     CURLcode perfResult = curl_easy_perform(curl);
@@ -34,6 +56,20 @@ CURLcode httpGet(CURL *curl, std::string &url) {
         std::cerr << "problem loading page:" << curl_easy_strerror(perfResult) << std::endl; 
     }
     return perfResult;
+}
+
+int printHeaders(CURL *curl) {
+    struct curl_header *prev = NULL;
+    struct curl_header *h;
+    do {
+        h = curl_easy_nextheader(curl, CURLH_HEADER, -1, prev);
+        if(h) {
+            //printf(" %s: %s (%u)\n", h->name, h->value, (unsigned int) h->amount);
+            std::cout << h->name << ": " << h->value << " (" << h->amount << ")" << std::endl;
+        }
+        prev = h;
+    } while(h);
+    return 0;
 }
 
 CURLcode getPage(CURL *curl, std::string &url, bool print, bool redirect) {
@@ -52,18 +88,4 @@ CURLcode getPage(CURL *curl, std::string &url, bool print, bool redirect) {
     getResult = httpGet(curl, url);
     page.print();
     return getResult;
-}
-
-int printHeaders(CURL *curl) {
-    struct curl_header *prev = NULL;
-    struct curl_header *h;
-    do {
-        h = curl_easy_nextheader(curl, CURLH_HEADER, -1, prev);
-        if(h) {
-            //printf(" %s: %s (%u)\n", h->name, h->value, (unsigned int) h->amount);
-            std::cout << h->name << ": " << h->value << " (" << h->amount << ")" << std::endl;
-        }
-        prev = h;
-    } while(h);
-    return 0;
 }
