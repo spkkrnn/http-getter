@@ -5,6 +5,12 @@
 #include <exception>
 #include <unordered_map>
 #include <curl/curl.h>
+#include <libxml/xpath.h>
+#include <libxml/HTMLparser.h>
+
+#define MAXNODELEN 512
+
+static std::string ftypes[] = {"ico", "jpg", "jpeg", "png", "svg", "css", "js"};
 
 namespace InfoVars {
     const std::unordered_map<std::string, CURLINFO> transferDetails = {
@@ -21,6 +27,12 @@ enum type {
     IMAGE,
     SCRIPT,
     STYLE
+};
+
+enum linkpath {
+    NONE,
+    ABSOLUTE,
+    RELATIVE
 };
 
 class WebResource {
@@ -41,6 +53,8 @@ class WebResource {
         int append(char* , size_t );
         void addInfo(std::string , curl_off_t);
         void print();
+        char* getHtml() { return m_data; }
+        size_t getHtmlLen() { return m_size; }
         ~WebResource() {
             free(m_data);
             delete m_info;
