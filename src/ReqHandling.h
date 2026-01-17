@@ -22,43 +22,57 @@ namespace InfoVars {
     }; //{"posttransfer", CURLINFO_POSTTRANSFER_TIME_T} not in current libcurl
 }
 
-enum type {
-    HTML,
-    IMAGE,
-    SCRIPT,
-    STYLE
-};
-
 enum linkpath {
     NONE,
     ABSOLUTE,
     RELATIVE
 };
 
+using link_map = std::unordered_map<std::string, enum linkpath>;
+
 class WebResource {
-    private:
-        enum type m_type;
+    protected:
+        std::string m_url;
         char *m_data;
         size_t m_size;
-        std::unordered_map<std::string, curl_off_t> *m_info;
+        std::unordered_map<std::string, curl_off_t> *m_info; //transfer info
     public:
-        WebResource(enum type rsrcType)
-            : m_type(rsrcType)
-            , m_data(nullptr)
-            , m_size(0)
-            {
-                m_data = (char *)malloc(1);
-                m_info = new std::unordered_map<std::string, curl_off_t>;
+        WebResource(std::string url)
+            : m_url{ url }
+            , m_data{ (char *)malloc(1) }
+            , m_size{ 0 }
+            , m_info{ new std::unordered_map<std::string, curl_off_t>()} {
+                //m_data = (char *)malloc(1);
+                //m_info = std::unordered_map<std::string, curl_off_t>();
             }
         int append(char* , size_t );
-        void addInfo(std::string , curl_off_t);
+        void addInfo(std::string , curl_off_t );
         void print();
         char* getHtml() { return m_data; }
         size_t getHtmlLen() { return m_size; }
-        ~WebResource() {
-            free(m_data);
+        virtual ~WebResource() {
+            if (m_data) {
+                free(m_data);
+            }
             delete m_info;
         }
+};
+
+class WebPage : public WebResource {
+    private:
+        link_map *m_links;
+    public:
+        WebPage(std::string url)
+            : WebResource{ url }
+            , m_links{ new std::unordered_map<std::string, enum linkpath>() } {
+                //m_links = new std::unordered_map<std::string, enum linkpath>();
+            }
+        ~WebPage() {
+            delete m_links;
+        }
+        void addLink(std::string , enum linkpath );
+        void printLinks() const;
+        bool containsLink(const std::string ) const;
 };
 
 CURLcode getPage(CURL* , std::string& , bool=false , bool=true );

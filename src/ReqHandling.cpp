@@ -26,11 +26,29 @@ void WebResource::print() {
     printf("%.*s\n", (int) this->m_size, this->m_data);
 }
 
-void printLinks(std::unordered_map<std::string, enum linkpath> &links) {
-    for (const auto &linkPair : links) {
+void WebPage::addLink(std::string link, enum linkpath pathType) {
+    try {
+        this->m_links->insert({link, pathType});
+    }
+    catch (std::bad_alloc& e) {
+        std::cerr << "Allocation failed for " << link << ": " << e.what() << std::endl;
+    }
+}
+
+void WebPage::printLinks() const {
+    for (const auto &linkPair : *(this->m_links)) { // terrible way to do this?
         std::cout << linkPair.first << "\n";
     }
     std::cout << std::endl;
+}
+
+bool WebPage::containsLink(const std::string link) const {
+    if (this->m_links->count(link) != 0) {
+        return true;
+    }
+    else {
+        return false;
+    }
 }
 
 static size_t receiveData(char *buffer, size_t itemsize, size_t nmemb, void *dest) {
@@ -44,7 +62,6 @@ static size_t receiveData(char *buffer, size_t itemsize, size_t nmemb, void *des
 }
 
 int saveTransferInfo(CURL *curl, WebResource &resource) {
-    //const std::unordered_map<std::string, CURLINFO> *vars = &(InfoVars::transferDetails);
     CURLcode result;
     curl_off_t tmp;
     for (const auto &infoPair : InfoVars::transferDetails) {
@@ -102,9 +119,8 @@ std::string findObj(char *nodeText) {
     return objLink;
 }
 
-int scrapeLinks(WebResource &webPage) { // TODO: add error checks
+int scrapeLinks(WebPage &webPage) { // TODO: add error checks
     std::string xCmd("//@href");
-    std::unordered_map<std::string, enum linkpath> links;
     htmlDocPtr doc = htmlReadMemory(webPage.getHtml(), webPage.getHtmlLen(), NULL, NULL, HTML_PARSE_NOERROR);
     xmlXPathContextPtr context = xmlXPathNewContext(doc);
     xmlXPathObjectPtr result = xmlXPathEvalExpression((xmlChar *) xCmd.c_str(), context);
@@ -120,21 +136,21 @@ int scrapeLinks(WebResource &webPage) { // TODO: add error checks
         char *content = (char *)xmlNodeGetContent(result->nodesetval->nodeTab[i]);
         std::string added = findObj(content); // I guess we'll trust this is null-terminated
         xmlFree(content);
-        if (!added.empty() && links.count(added) == 0) {
+        if (!added.empty() && !webPage.containsLink(added)) {
             enum linkpath pathType = NONE;
             if (added[0] == 'h') pathType = ABSOLUTE;
             else if (added[0] == '/') pathType = RELATIVE;
             if (pathType == NONE) {
                 std::cout << "Invalid link: " << added << std::endl;
             }
-            links.insert(std::make_pair(added, pathType));
+            webPage.addLink(added, pathType);
         }
     }
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
     xmlFreeDoc(doc);
     xmlCleanupParser();
-    printLinks(links);
+    webPage.printLinks(); // test
     return 0;
 }
 
@@ -148,7 +164,8 @@ CURLcode getPage(CURL *curl, std::string &url, bool print, bool redirect) {
         getResult = httpGet(curl, url);
         return getResult;
     }
-    WebResource page(HTML);
+    WebPage page(url);
+    //std::shared_ptr<WebPage> page = std::make_shared<WebPage>(url);
     //std::unordered_map<std::string, enum linkpath> contentLinks;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveData);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&page);
