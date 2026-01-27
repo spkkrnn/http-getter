@@ -3,9 +3,10 @@
 int main(int argc, char* argv[]) {
     using namespace std;
     // input arguments
-    string target; // webpage URL
+    string target = "https://"; // webpage URL
     if (argc == 2) {
-        target = argv[1];
+        std::string arg1(argv[1]);
+        target = ((arg1.find("http")) != 0) ? (target + arg1) : arg1;
     }
     else {
         target = "http://localhost:8989/test";
@@ -24,7 +25,7 @@ int main(int argc, char* argv[]) {
 
     getPage(curl, target, print, redirect);
 
-    printHeaders(curl);
+    //printHeaders(curl);
     curl_easy_cleanup(curl);
     curl_global_cleanup();
     return EXIT_SUCCESS;
