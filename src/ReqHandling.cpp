@@ -77,6 +77,19 @@ void WebPage::addContent(int orderNum, WebResource resource) {
     }
 }
 
+void WebPage::removeHandles(CURLM *mCurl) {
+    for (const auto &contentPair : *(this->m_content)) {
+        CURL *currentCurl = contentPair.second.getConnection();
+        curl_multi_remove_handle(mCurl, currentCurl);
+    }
+}
+
+void WebPage::cleanUpContents() {
+    for (auto &contentPair : *(this->m_content)) {
+        contentPair.second.cleanUp();
+    }
+}
+
 void WebPage::printLinks() const {
     for (const auto &linkPair : *(this->m_links)) { // terrible way to do this?
         std::cout << linkPair.first << "\n";
@@ -136,6 +149,37 @@ int printHeaders(CURL *curl) {
         prev = h;
     } while(h);
     return 0;
+}
+
+static int setCurlOptions(CURL *curl, WebResource &resource, int httpVersion, bool multi=true) {
+    const std::string url = resource.getUrl();
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    switch (httpVersion) {
+        case 1:
+            curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+            break;
+        case 2:
+            curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+            break;
+        case 3:
+            curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_3);
+            break;
+    }
+    if (multi) {
+        curl_easy_setopt(curl, CURLOPT_PIPEWAIT, 1L);
+        curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 100000L);
+    }
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveData);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&resource);
+    return 0;
+}
+
+void cleanUpMulti(CURLM *multi, WebPage &webPage, bool cleanCurls=true) {
+    if (multi) {
+        webPage.removeHandles(multi);
+        if (cleanCurls) webPage.cleanUpContents();
+    }
+    curl_multi_cleanup(multi);
 }
 
 std::string stripToBase(const std::string &url) {
@@ -237,7 +281,7 @@ int fetchContent(CURL *curl, WebPage &webPage, bool baseOnly=false) { // HTTP/1
         if (linkPair.second != BASE_CONTENT) {
             continue;
         }
-        WebResource resource(linkPair.first);
+        WebResource resource(curl, linkPair.first);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&resource);
         getResult = httpGet(curl, linkPair.first);
         ++index;
@@ -253,7 +297,7 @@ int fetchContent(CURL *curl, WebPage &webPage, bool baseOnly=false) { // HTTP/1
         if (linkPair.second != EXTERNAL_CONTENT) {
             continue;
         }
-        WebResource resource(linkPair.first);
+        WebResource resource(curl, linkPair.first);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&resource);
         getResult = httpGet(curl, linkPair.first);
         ++index;
@@ -267,7 +311,42 @@ int fetchContent(CURL *curl, WebPage &webPage, bool baseOnly=false) { // HTTP/1
     return 0;
 }
 
-CURLcode getPage(CURL *curl, std::string &url, bool print, bool redirect) {
+int multiFetch(WebPage &webPage, int httpVersion) {
+    CURLM *multi = nullptr;
+    link_map *linkList = webPage.getLinks();
+    if (linkList->empty()) return 0;
+    CURLcode getResult = CURLE_OK;
+    multi = curl_multi_init();
+    int handlesRunning = 0;
+    int index = 0;
+    if (!multi) {
+        cleanUpMulti(multi, webPage);
+        return -1;
+    }
+    for (const auto &linkPair : *linkList) {
+        if (linkPair.second != BASE_CONTENT) {
+            continue;
+        }
+        CURL *objCurl = nullptr;
+        ++index;
+        WebResource resource(objCurl, linkPair.first);
+        setCurlOptions(objCurl, resource, httpVersion);
+        curl_multi_add_handle(multi, objCurl);
+        webPage.addContent(index, resource);
+    }
+    curl_multi_setopt(multi, CURLMOPT_PIPELINING, CURLPIPE_MULTIPLEX);
+    do {
+        CURLMcode mResult = curl_multi_perform(multi, &handlesRunning);
+        if (handlesRunning) {
+            mResult = curl_multi_poll(multi, NULL, 0, 1000, NULL);
+        }
+        if (mResult) break;
+    } while (handlesRunning);
+    cleanUpMulti(multi, webPage, false);
+    return 0;
+}
+
+CURLcode getPage(CURL *curl, std::string &url, int httpVersion, bool print, bool redirect) {
     CURLcode getResult = CURLE_OK;
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
     if (redirect) {
@@ -277,7 +356,7 @@ CURLcode getPage(CURL *curl, std::string &url, bool print, bool redirect) {
         getResult = httpGet(curl, url);
         return getResult;
     }
-    WebPage page(url);
+    WebPage page(curl, url);
     //std::shared_ptr<WebPage> page = std::make_shared<WebPage>(url);
     //std::unordered_map<std::string, enum linkpath> contentLinks;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveData);
@@ -290,7 +369,12 @@ CURLcode getPage(CURL *curl, std::string &url, bool print, bool redirect) {
     scrapeLinks(page);
     saveTransferInfo(curl, page);
     //page.printTransferInfo();
-    fetchContent(curl, page);
+    if (httpVersion < 2) {
+        fetchContent(curl, page);
+    }
+    else {
+        multiFetch(page, httpVersion);
+    }
     page.printAllTransferInfo();
     return getResult;
 }

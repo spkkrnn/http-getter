@@ -13,17 +13,18 @@ int main(int argc, char* argv[]) {
     }
     // inits
     CURL *curl;
-    CURLcode globalInit = curl_global_init(CURL_GLOBAL_SSL);
+    CURLcode globalInit = curl_global_init(CURL_GLOBAL_ALL);
     curl = curl_easy_init();
     if (!curl || globalInit) {
         cerr << "init failed" << endl;
         return EXIT_FAILURE;
     }
     //set options
+    int version = 2;
     bool redirect = true; // follow redirects to webpage
     bool print = false; // print to stdout
 
-    getPage(curl, target, print, redirect);
+    getPage(curl, target, version, print, redirect);
 
     //printHeaders(curl);
     curl_easy_cleanup(curl);

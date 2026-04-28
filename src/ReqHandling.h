@@ -8,6 +8,10 @@
 #include <libxml/xpath.h>
 #include <libxml/HTMLparser.h>
 
+#ifndef CULPIPE_MULTIPLEX
+#define CURLPIPE_MULTIPLEX 0L
+#endif
+
 #define MAXNODELEN 512
 
 static std::string ftypes[] = {"avif", "ico", "jpg", "jpeg", "png", "svg", "css", "js"};
@@ -32,18 +36,21 @@ enum linkpath {
 
 class WebResource {
     protected:
+        CURL *m_curl;
         std::string m_url;
         char *m_data;
         size_t m_size;
         std::unordered_map<std::string, curl_off_t> *m_info; //transfer details specified in InfoVars
     public:
-        WebResource(std::string url)
-            : m_url{ url }
+        WebResource(CURL *curl, std::string url)
+            : m_curl{ curl }
+            , m_url{ url }
             , m_data{ (char *)malloc(1) }
             , m_size{ 0 }
             , m_info{ new std::unordered_map<std::string, curl_off_t>() } {
             }
         WebResource(const WebResource &rsc) {
+            m_curl = rsc.getConnection();
             m_url = rsc.getUrl();
             m_data = (char *)malloc(1); // discard data
             m_size = 0;
@@ -53,9 +60,11 @@ class WebResource {
         void addInfo(std::string , curl_off_t );
         void printTransferInfo() const;
         void print() const;
+        CURL* getConnection() const { return m_curl; }
         size_t getDataLen() { return m_size; }
         std::string getUrl() const { return m_url; }
         std::unordered_map<std::string, curl_off_t> getInfo() const { return *m_info; }
+        void cleanUp() { curl_easy_cleanup(m_curl); }
         virtual ~WebResource() {
             if (m_data) {
                 free(m_data);
@@ -72,8 +81,8 @@ class WebPage : public WebResource {
         link_map *m_links;
         resource_map *m_content;
     public:
-        WebPage(std::string url)
-            : WebResource{ url }
+        WebPage(CURL* curl, std::string url)
+            : WebResource{ curl, url }
             , m_links{ new std::unordered_map<std::string, enum linkpath>() }
             , m_content{ new std::unordered_map<int, WebResource>() } {
             }
@@ -84,6 +93,9 @@ class WebPage : public WebResource {
         int append(char* , size_t ) override;
         void addLink(std::string , enum linkpath );
         void addContent(int , WebResource );
+        resource_map *getContents() { return m_content; }
+        void removeHandles(CURLM* );
+        void cleanUpContents();
         char* getHtml() { return m_data; }
         link_map *getLinks() { return m_links; };
         void printLinks() const;
@@ -91,5 +103,5 @@ class WebPage : public WebResource {
         bool containsLink(const std::string ) const;
 };
 
-CURLcode getPage(CURL* , std::string& , bool=false , bool=true );
+CURLcode getPage(CURL* , std::string& , int , bool=false , bool=true );
 int printHeaders(CURL* );
