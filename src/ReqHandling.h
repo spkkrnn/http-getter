@@ -8,10 +8,6 @@
 #include <libxml/xpath.h>
 #include <libxml/HTMLparser.h>
 
-#ifndef CULPIPE_MULTIPLEX
-#define CURLPIPE_MULTIPLEX 0L
-#endif
-
 #define MAXNODELEN 512
 
 static std::string ftypes[] = {"avif", "ico", "jpg", "jpeg", "png", "svg", "css", "js"};
@@ -40,13 +36,15 @@ class WebResource {
         std::string m_url;
         char *m_data;
         size_t m_size;
+        int m_id;
         std::unordered_map<std::string, curl_off_t> *m_info; //transfer details specified in InfoVars
     public:
-        WebResource(CURL *curl, std::string url)
+        WebResource(CURL *curl, std::string url, int id)
             : m_curl{ curl }
             , m_url{ url }
             , m_data{ (char *)malloc(1) }
             , m_size{ 0 }
+            , m_id{ id }
             , m_info{ new std::unordered_map<std::string, curl_off_t>() } {
             }
         WebResource(const WebResource &rsc) {
@@ -61,7 +59,8 @@ class WebResource {
         void printTransferInfo() const;
         void print() const;
         CURL* getConnection() const { return m_curl; }
-        size_t getDataLen() { return m_size; }
+        size_t getDataLen() const { return m_size; }
+        int getID() const { return m_id; }
         std::string getUrl() const { return m_url; }
         std::unordered_map<std::string, curl_off_t> getInfo() const { return *m_info; }
         void cleanUp() { curl_easy_cleanup(m_curl); }
@@ -82,7 +81,7 @@ class WebPage : public WebResource {
         resource_map *m_content;
     public:
         WebPage(CURL* curl, std::string url)
-            : WebResource{ curl, url }
+            : WebResource{ curl, url, 0 }
             , m_links{ new std::unordered_map<std::string, enum linkpath>() }
             , m_content{ new std::unordered_map<int, WebResource>() } {
             }
@@ -103,5 +102,5 @@ class WebPage : public WebResource {
         bool containsLink(const std::string ) const;
 };
 
-CURLcode getPage(CURL* , std::string& , int , bool=false , bool=true );
+CURLcode getPage(CURL* , std::string& , bool , bool );
 int printHeaders(CURL* );

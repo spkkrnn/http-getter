@@ -41,7 +41,7 @@ void WebResource::addInfo(std::string name, curl_off_t value) {
 }
 
 void WebResource::printTransferInfo() const {
-    std::cout << "Resource: " << this->m_url << "\n";
+    std::cout << "Resource " << this->m_id << ": " << this->m_url << "\n";
     for (const auto &infoPair : *(this->m_info)) { // terrible way to do this?
         std::cout << infoPair.first << ": " << infoPair.second << "\n";
     }
@@ -106,6 +106,73 @@ bool WebPage::containsLink(const std::string link) const {
     }
 }
 
+static void dumpTrace(const char *text, const unsigned char *ptr, size_t size, char nohex) {  // from libcurl examples
+    size_t i;
+    size_t c;
+    unsigned int width = 0x10;
+    if(nohex)
+        width = 0x40;
+    fprintf(stderr, "%s, %lu bytes (0x%lx)\n", text, (unsigned long)size, (unsigned long)size);
+    for(i = 0; i < size; i += width) {
+        fprintf(stderr, "%4.4lx: ", (unsigned long)i);
+    if(!nohex) {
+      for(c = 0; c < width; c++)
+        if(i + c < size)
+          fprintf(stderr, "%02x ", ptr[i + c]);
+        else
+          fputs("   ", stderr);
+    }
+    for(c = 0; (c < width) && (i + c < size); c++) {
+        if(nohex && (i + c + 1 < size) && ptr[i + c] == 0x0D && ptr[i + c + 1] == 0x0A) {
+            i += (c + 2 - width);
+            break;
+        }
+        fprintf(stderr, "%c", (ptr[i + c] >= 0x20) && (ptr[i + c] < 0x80) ? ptr[i + c] : '.');
+        if(nohex && (i + c + 2 < size) && ptr[i + c + 1] == 0x0D &&
+            ptr[i + c + 2] == 0x0A) {
+            i += (c + 3 - width);
+            break;
+        }
+    }
+    fputc('\n', stderr);
+  }
+}
+ 
+static int curlTrace(CURL *curl, curl_infotype infoType, char *data, size_t size, void *ptr) { // from libcurl examples
+  const char *text;
+  //WebResource *tmpResource = (WebResource *)resPtr;
+  //int num = tmpResource->getID();
+  char *hexChar = (char *)ptr;
+  (void)curl;
+  switch(infoType) {
+  case CURLINFO_TEXT:
+    fprintf(stderr, "== Info: %s", data);
+    return 0;
+  case CURLINFO_HEADER_OUT:
+    text = "=> Send header";
+    break;
+  case CURLINFO_DATA_OUT:
+    text = "=> Send data";
+    break;
+  case CURLINFO_SSL_DATA_OUT:
+    text = "=> Send SSL data";
+    break;
+  case CURLINFO_HEADER_IN:
+    text = "<= Recv header";
+    break;
+  case CURLINFO_DATA_IN:
+    text = "<= Recv data";
+    break;
+  case CURLINFO_SSL_DATA_IN:
+    text = "<= Recv SSL data";
+    break;
+  default:
+    return 0;
+  }
+  dumpTrace(text, (const unsigned char *)data, size, *hexChar);
+  return 0;
+}
+
 static size_t receiveData(char *buffer, size_t itemsize, size_t nmemb, void *dest) {
     size_t chunkSize = itemsize * nmemb;
     WebResource *tmpResource = (WebResource *)dest;
@@ -151,7 +218,7 @@ int printHeaders(CURL *curl) {
     return 0;
 }
 
-static int setCurlOptions(CURL *curl, WebResource &resource, int httpVersion, bool multi=true) {
+static int setCurlOptions(CURL *curl, WebResource &resource, int httpVersion, bool multi=true, bool trace=true) {
     const std::string url = resource.getUrl();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     switch (httpVersion) {
@@ -171,6 +238,11 @@ static int setCurlOptions(CURL *curl, WebResource &resource, int httpVersion, bo
     }
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveData);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&resource);
+    if (trace) {
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curlTrace);
+        curl_easy_setopt(curl, CURLOPT_DEBUGDATA, (void *)&resource);
+    }
     return 0;
 }
 
@@ -271,20 +343,22 @@ int scrapeLinks(WebPage &webPage) { // TODO: add error checks
     return 0;
 }
 
-int fetchContent(CURL *curl, WebPage &webPage, bool baseOnly=false) { // HTTP/1
+int fetchContent(CURL *curl, WebPage &webPage, bool baseOnly=false) {
     link_map *linkList = webPage.getLinks();
     if (linkList->empty()) return 0;
     CURLcode getResult = CURLE_OK;
     int index = 0;
-    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1); // TODO: make 1.0 an option?
     for (const auto &linkPair : *linkList) {
         if (linkPair.second != BASE_CONTENT) {
             continue;
         }
-        WebResource resource(curl, linkPair.first);
+        ++index;
+        WebResource resource(curl, linkPair.first, index);
+        /*if (debugTrace) {
+            curl_easy_setopt(curl, CURLOPT_DEBUGDATA, (void *)&resource);
+        }*/
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&resource);
         getResult = httpGet(curl, linkPair.first);
-        ++index;
         if (getResult != CURLE_OK) {
             std::cout << "Failed to fetch " << linkPair.first << std::endl;
             continue;
@@ -297,10 +371,10 @@ int fetchContent(CURL *curl, WebPage &webPage, bool baseOnly=false) { // HTTP/1
         if (linkPair.second != EXTERNAL_CONTENT) {
             continue;
         }
-        WebResource resource(curl, linkPair.first);
+        ++index;
+        WebResource resource(curl, linkPair.first, index);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&resource);
         getResult = httpGet(curl, linkPair.first);
-        ++index;
         if (getResult != CURLE_OK) {
             std::cout << "Failed to fetch " << linkPair.first << std::endl;
             continue;
@@ -311,14 +385,14 @@ int fetchContent(CURL *curl, WebPage &webPage, bool baseOnly=false) { // HTTP/1
     return 0;
 }
 
-int multiFetch(WebPage &webPage, int httpVersion) {
+int multiFetch(WebPage &webPage, int httpVersion) { // not functional
     CURLM *multi = nullptr;
     link_map *linkList = webPage.getLinks();
     if (linkList->empty()) return 0;
     CURLcode getResult = CURLE_OK;
     multi = curl_multi_init();
     int handlesRunning = 0;
-    int index = 0;
+    int index = 0; // becomes the ID of the download
     if (!multi) {
         cleanUpMulti(multi, webPage);
         return -1;
@@ -329,7 +403,7 @@ int multiFetch(WebPage &webPage, int httpVersion) {
         }
         CURL *objCurl = nullptr;
         ++index;
-        WebResource resource(objCurl, linkPair.first);
+        WebResource resource(objCurl, linkPair.first, index);
         setCurlOptions(objCurl, resource, httpVersion);
         curl_multi_add_handle(multi, objCurl);
         webPage.addContent(index, resource);
@@ -346,19 +420,16 @@ int multiFetch(WebPage &webPage, int httpVersion) {
     return 0;
 }
 
-CURLcode getPage(CURL *curl, std::string &url, int httpVersion, bool print, bool redirect) {
+CURLcode getPage(CURL *curl, std::string &url, bool print, bool trace) {
     CURLcode getResult = CURLE_OK;
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-    if (redirect) {
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L); // 1L = CURLFOLLOW_ALL
-    }
-    if (print) {
-        getResult = httpGet(curl, url);
-        return getResult;
+    char yesHex = 1;
+    if (trace) {
+        curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curlTrace);
+        curl_easy_setopt(curl, CURLOPT_DEBUGDATA, &yesHex);
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     }
     WebPage page(curl, url);
-    //std::shared_ptr<WebPage> page = std::make_shared<WebPage>(url);
-    //std::unordered_map<std::string, enum linkpath> contentLinks;
+
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveData);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&page);
     getResult = httpGet(curl, url);
@@ -369,12 +440,9 @@ CURLcode getPage(CURL *curl, std::string &url, int httpVersion, bool print, bool
     scrapeLinks(page);
     saveTransferInfo(curl, page);
     //page.printTransferInfo();
-    if (httpVersion < 2) {
-        fetchContent(curl, page);
+    fetchContent(curl, page);
+    if (print) {
+        page.printAllTransferInfo();
     }
-    else {
-        multiFetch(page, httpVersion);
-    }
-    page.printAllTransferInfo();
     return getResult;
 }
